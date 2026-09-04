@@ -593,8 +593,44 @@ __global__ void fused_linear_bias_gelu_kernel(
     out[idx] = gelu;
 }
 
-# Step 18 - mlp_swiglu_forward (not yet solved)
-# TODO: implement
+# Step 18 - mlp_swiglu_forward
+void mlp_swiglu_forward(const float* x, const float* w_gate, const float* w_up,
+                        const float* w_down, float* out,
+                        int M, int hidden_dim, int intermediate_dim) {
+    // Allocate temporary buffers for gate, up, and activation (act)
+    float *d_gate, *d_up, *d_act;
+    size_t temp_bytes = (size_t)M * intermediate_dim * sizeof(float);
+    cudaMalloc(&d_gate, temp_bytes);
+    cudaMalloc(&d_up, temp_bytes);
+    cudaMalloc(&d_act, temp_bytes);
+
+    // Launch configuration: 256 threads per block, enough blocks to cover all elements
+    int threads = 256;
+
+    // 1. Gate projection: gate = x @ w_gate^T, shape [M, intermediate_dim]
+    int blocks_gate_up = (M * intermediate_dim + threads - 1) / threads;
+    linear_kernel<<<blocks_gate_up, threads>>>(x, w_gate, nullptr, d_gate,
+                                               M, intermediate_dim, hidden_dim);
+
+    // 2. Up projection: up = x @ w_up^T, shape [M, intermediate_dim]
+    linear_kernel<<<blocks_gate_up, threads>>>(x, w_up, nullptr, d_up,
+                                               M, intermediate_dim, hidden_dim);
+
+    // 3. SwiGLU activation: act = silu(gate) * up, elementwise over M*intermediate_dim
+    swiglu_kernel<<<blocks_gate_up, threads>>>(d_gate, d_up, d_act,
+                                               M * intermediate_dim);
+
+    // 4. Down projection: out = act @ w_down^T, shape [M, hidden_dim]
+    int blocks_down = (M * hidden_dim + threads - 1) / threads;
+    linear_kernel<<<blocks_down, threads>>>(d_act, w_down, nullptr, out,
+                                            M, hidden_dim, intermediate_dim);
+
+    // Wait for all kernels to finish, then free temporary buffers
+    cudaDeviceSynchronize();
+    cudaFree(d_gate);
+    cudaFree(d_up);
+    cudaFree(d_act);
+}
 
 # Step 19 - rmsnorm_residual_block (not yet solved)
 # TODO: implement
