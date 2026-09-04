@@ -172,8 +172,61 @@ __global__ void swiglu_kernel(const float* gate, const float* up, float* out, in
     }
 }
 
-# Step 9 - rmsnorm_kernel (not yet solved)
-# TODO: implement
+# Step 9 - rmsnorm_kernel
+__global__ void rmsnorm_kernel(const float* x, const float* weight, float* out, int n, float eps) {
+    // Static shared memory: 32 floats covers up to 32 warps (1024 threads)
+    __shared__ float shared[32];
+
+    int row = blockIdx.x;
+    const float* x_row = x + (size_t)row * n;
+    float* out_row = out + (size_t)row * n;
+
+    // Step 1: each thread accumulates partial sum of squares
+    float sum_sq = 0.0f;
+    for (int i = threadIdx.x; i < n; i += blockDim.x) {
+        float v = x_row[i];
+        sum_sq += v * v;
+    }
+
+    // Step 2: warp-level reduction using XOR butterfly
+    #pragma unroll
+    for (int offset = 16; offset > 0; offset >>= 1) {
+        sum_sq += __shfl_xor_sync(0xffffffff, sum_sq, offset);
+    }
+
+    int lane = threadIdx.x & 31;
+    int warp_id = threadIdx.x >> 5;
+    int num_warps = (blockDim.x + 31) >> 5;
+
+    // Step 3: each warp writes its sum to shared memory
+    if (lane == 0) {
+        shared[warp_id] = sum_sq;
+    }
+    __syncthreads();
+
+    // Step 4: warp 0 reduces all warp sums
+    float block_sum_sq = 0.0f;
+    if (warp_id == 0) {
+        float partial = (lane < num_warps) ? shared[lane] : 0.0f;
+        #pragma unroll
+        for (int offset = 16; offset > 0; offset >>= 1) {
+            partial += __shfl_xor_sync(0xffffffff, partial, offset);
+        }
+        block_sum_sq = partial;
+
+        // Compute inverse RMS and broadcast via shared[0]
+        float mean_sq = block_sum_sq / n;
+        float rms = sqrtf(mean_sq + eps);
+        shared[0] = 1.0f / rms;
+    }
+    __syncthreads();
+
+    // Step 5: all threads read inv_rms and apply normalization
+    float inv_rms = shared[0];
+    for (int i = threadIdx.x; i < n; i += blockDim.x) {
+        out_row[i] = x_row[i] * inv_rms * weight[i];
+    }
+}
 
 # Step 10 - layernorm_kernel (not yet solved)
 # TODO: implement
