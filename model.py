@@ -20,8 +20,19 @@ __device__ float warp_reduce_sum(float val) {
     return val;
 }
 
-# Step 2 - warp_reduce_max (not yet solved)
-# TODO: implement
+# Step 2 - warp_reduce_max
+__device__ float warp_reduce_max(float val) {
+    // Butterfly (xor) tree reduction across the warp for maximum
+    // Each step takes the max between current value and partner lane's value
+    
+    val = fmaxf(val, __shfl_xor_sync(0xffffffff, val, 16));
+    val = fmaxf(val, __shfl_xor_sync(0xffffffff, val, 8));
+    val = fmaxf(val, __shfl_xor_sync(0xffffffff, val, 4));
+    val = fmaxf(val, __shfl_xor_sync(0xffffffff, val, 2));
+    val = fmaxf(val, __shfl_xor_sync(0xffffffff, val, 1));
+    
+    return val;
+}
 
 # Step 3 - block_reduce_sum (not yet solved)
 # TODO: implement
