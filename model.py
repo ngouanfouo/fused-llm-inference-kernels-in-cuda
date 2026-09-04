@@ -465,8 +465,30 @@ __global__ void causal_softmax_kernel(const float* x, float* out, int rows, int 
     }
 }
 
-# Step 14 - embedding_lookup_kernel (not yet solved)
-# TODO: implement
+# Step 14 - embedding_lookup_kernel
+__global__ void embedding_lookup_kernel(const int* token_ids, const float* weight, 
+                                        float* out, int seq_len, int vocab_size, 
+                                        int embed_dim) {
+    // Total number of output elements
+    int total = seq_len * embed_dim;
+    
+    // Grid-stride loop over all output elements
+    for (int idx = blockIdx.x * blockDim.x + threadIdx.x; 
+         idx < total; 
+         idx += blockDim.x * gridDim.x) {
+        
+        // Compute sequence position and feature dimension
+        int pos = idx / embed_dim;          // which token in the sequence
+        int dim = idx % embed_dim;          // which embedding element
+        
+        // Load token ID for this position
+        int token = token_ids[pos];
+        
+        // Copy the embedding vector element from the weight table
+        // weight is row-major: [vocab_size][embed_dim]
+        out[idx] = weight[(size_t)token * embed_dim + dim];
+    }
+}
 
 # Step 15 - rope_kernel (not yet solved)
 # TODO: implement
