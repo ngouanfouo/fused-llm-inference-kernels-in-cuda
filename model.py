@@ -373,8 +373,97 @@ __global__ void softmax_row_kernel(const float* x, float* out, int rows, int col
     }
 }
 
-# Step 13 - causal_softmax_kernel (not yet solved)
-# TODO: implement
+# Step 13 - causal_softmax_kernel
+__global__ void causal_softmax_kernel(const float* x, float* out, int rows, int cols) {
+    // Static shared memory: 32 floats covers up to 32 warps (1024 threads)
+    __shared__ float shared[32];
+
+    int row = blockIdx.x;
+    const float* x_row = x + (size_t)row * cols;
+    float* out_row = out + (size_t)row * cols;
+
+    // Valid length: only columns <= row participate (causal mask)
+    int valid_len = (row + 1 < cols) ? row + 1 : cols;
+
+    // ---------- Step 1: find max over valid prefix ----------
+    float local_max = -INFINITY;
+    for (int i = threadIdx.x; i < valid_len; i += blockDim.x) {
+        float v = x_row[i];
+        if (v > local_max) local_max = v;
+    }
+
+    // Warp-level max reduction (XOR butterfly)
+    #pragma unroll
+    for (int offset = 16; offset > 0; offset >>= 1) {
+        local_max = fmaxf(local_max, __shfl_xor_sync(0xffffffff, local_max, offset));
+    }
+
+    // Warp 0 collects partial maxima from all warps
+    int lane = threadIdx.x & 31;
+    int warp_id = threadIdx.x >> 5;
+    int num_warps = (blockDim.x + 31) >> 5;
+
+    if (lane == 0) {
+        shared[warp_id] = local_max;
+    }
+    __syncthreads();
+
+    // Warp 0 reduces all partial maxima
+    float row_max = -INFINITY;
+    if (warp_id == 0) {
+        float partial = (lane < num_warps) ? shared[lane] : -INFINITY;
+        #pragma unroll
+        for (int offset = 16; offset > 0; offset >>= 1) {
+            partial = fmaxf(partial, __shfl_xor_sync(0xffffffff, partial, offset));
+        }
+        row_max = partial;
+        // Broadcast row_max to all threads via shared[0]
+        shared[0] = row_max;
+    }
+    __syncthreads();
+    row_max = shared[0];
+
+    // ---------- Step 2: sum of exponentials over valid prefix ----------
+    float local_sum = 0.0f;
+    for (int i = threadIdx.x; i < valid_len; i += blockDim.x) {
+        local_sum += expf(x_row[i] - row_max);
+    }
+
+    // Warp-level sum reduction
+    #pragma unroll
+    for (int offset = 16; offset > 0; offset >>= 1) {
+        local_sum += __shfl_xor_sync(0xffffffff, local_sum, offset);
+    }
+
+    if (lane == 0) {
+        shared[warp_id] = local_sum;
+    }
+    __syncthreads();
+
+    float row_sum = 0.0f;
+    if (warp_id == 0) {
+        float partial = (lane < num_warps) ? shared[lane] : 0.0f;
+        #pragma unroll
+        for (int offset = 16; offset > 0; offset >>= 1) {
+            partial += __shfl_xor_sync(0xffffffff, partial, offset);
+        }
+        row_sum = partial;
+        shared[0] = row_sum;
+    }
+    __syncthreads();
+    row_sum = shared[0];
+
+    // ---------- Step 3: write outputs ----------
+    // Write valid columns (c <= row) with softmax
+    for (int i = threadIdx.x; i < valid_len; i += blockDim.x) {
+        out_row[i] = expf(x_row[i] - row_max) / row_sum;
+    }
+
+    // Write masked columns (c > row) as zero
+    for (int i = threadIdx.x + valid_len; i < cols; i += blockDim.x) {
+        out_row[i] = 0.0f;
+    }
+}
 
 # Step 14 - embedding_lookup_kernel (not yet solved)
 # TODO: implement
