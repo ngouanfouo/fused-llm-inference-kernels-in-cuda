@@ -280,8 +280,50 @@ __global__ void layernorm_kernel(const float* x, const float* weight, const floa
     }
 }
 
-# Step 11 - fused_add_rmsnorm_kernel (not yet solved)
-# TODO: implement
+# Step 11 - fused_add_rmsnorm_kernel
+__global__ void fused_add_rmsnorm_kernel(
+    const float* x,
+    const float* residual,
+    const float* weight,
+    float* out,
+    float* residual_out,
+    int n,
+    float eps
+) {
+    // Static shared memory: 32 floats covers up to 32 warps (1024 threads)
+    __shared__ float shared[32];
+    
+    int row = blockIdx.x;
+    const float* x_row = x + (size_t)row * n;
+    const float* residual_row = residual + (size_t)row * n;
+    float* out_row = out + (size_t)row * n;
+    float* residual_out_row = residual_out + (size_t)row * n;
+    
+    // ============ PASS 1: Residual add + sum of squares ============
+    float sum_sq = 0.0f;
+    for (int i = threadIdx.x; i < n; i += blockDim.x) {
+        float r = x_row[i] + residual_row[i];
+        residual_out_row[i] = r;
+        sum_sq += r * r;
+    }
+    
+    // Reduce to block-wide sum of squares
+    float block_sum_sq = block_reduce_sum(sum_sq, shared);
+    
+    // Compute inverse RMS and broadcast to all threads
+    if (threadIdx.x == 0) {
+        float rms = sqrtf(block_sum_sq / n + eps);
+        shared[0] = 1.0f / rms;  // inv_rms
+    }
+    __syncthreads();
+    
+    float inv_rms = shared[0];
+    
+    // ============ PASS 2: Apply normalization and scaling ============
+    for (int i = threadIdx.x; i < n; i += blockDim.x) {
+        out_row[i] = residual_out_row[i] * inv_rms * weight[i];
+    }
+}
 
 # Step 12 - softmax_row_kernel (not yet solved)
 # TODO: implement
