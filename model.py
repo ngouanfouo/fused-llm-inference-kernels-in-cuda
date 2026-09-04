@@ -528,8 +528,33 @@ __global__ void rope_kernel(float* q, float* k,
     k[odd]  = k0 * sin_val + k1 * cos_val;
 }
 
-# Step 16 - linear_kernel (not yet solved)
-# TODO: implement
+# Step 16 - linear_kernel
+__global__ void linear_kernel(const float* x, const float* weight,
+                              const float* bias, float* out,
+                              int M, int N, int K) {
+    // Total number of output elements (M * N)
+    int total = M * N;
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx >= total) return;
+
+    // Determine row (m) and column (n) in the output matrix
+    int m = idx / N;       // which batch element
+    int n = idx % N;       // which output feature
+
+    // Compute dot product: sum over K
+    float sum = 0.0f;
+    for (int k = 0; k < K; ++k) {
+        sum += x[(size_t)m * K + k] * weight[(size_t)n * K + k];
+    }
+
+    // Add bias if provided
+    if (bias != nullptr) {
+        sum += bias[n];
+    }
+
+    // Write result
+    out[idx] = sum;
+}
 
 # Step 17 - fused_linear_bias_gelu_kernel (not yet solved)
 # TODO: implement
