@@ -67,8 +67,39 @@ __device__ float block_reduce_sum(float val, float* shared) {
     return block_sum;
 }
 
-# Step 4 - block_reduce_max (not yet solved)
-# TODO: implement
+# Step 4 - block_reduce_max
+__device__ float block_reduce_max(float val, float* shared) {
+    // Compute lane ID and warp ID
+    int lane = threadIdx.x & 31;  // threadIdx.x % 32
+    int warp_id = threadIdx.x >> 5;  // threadIdx.x / 32
+    
+    // Step 1: Reduce within each warp
+    float warp_max = warp_reduce_max(val);
+    
+    // Step 2: Each warp's lane 0 writes its max to shared memory
+    if (lane == 0) {
+        shared[warp_id] = warp_max;
+    }
+    
+    // Step 3: Synchronize to ensure all warp maxima are written
+    __syncthreads();
+    
+    // Step 4: Only warp 0 reduces the partial maxima
+    float block_max = -INFINITY;
+    if (warp_id == 0) {
+        // Number of warps in the block
+        int num_warps = (blockDim.x + 31) >> 5;  // ceil(blockDim.x / 32)
+        
+        // Each lane of warp 0 loads one partial max (if within bounds)
+        // Use -INFINITY for inactive lanes so they don't affect the max
+        float partial = (lane < num_warps) ? shared[lane] : -INFINITY;
+        
+        // Reduce all partial maxima across warp 0
+        block_max = warp_reduce_max(partial);
+    }
+    
+    return block_max;
+}
 
 # Step 5 - add_residual_kernel (not yet solved)
 # TODO: implement
