@@ -325,8 +325,53 @@ __global__ void fused_add_rmsnorm_kernel(
     }
 }
 
-# Step 12 - softmax_row_kernel (not yet solved)
-# TODO: implement
+# Step 12 - softmax_row_kernel
+__global__ void softmax_row_kernel(const float* x, float* out, int rows, int cols) {
+    // Dynamic shared memory for block reductions (one slot per warp)
+    extern __shared__ float shared[];
+    
+    int row = blockIdx.x;
+    const float* x_row = x + (size_t)row * cols;
+    float* out_row = out + (size_t)row * cols;
+    
+    // ============ PASS 1: Find row max ============
+    float local_max = -INFINITY;
+    for (int i = threadIdx.x; i < cols; i += blockDim.x) {
+        float v = x_row[i];
+        if (v > local_max) local_max = v;
+    }
+    
+    // Reduce to block-wide max
+    float row_max = block_reduce_max(local_max, shared);
+    
+    // Broadcast row_max to all threads
+    if (threadIdx.x == 0) {
+        shared[0] = row_max;
+    }
+    __syncthreads();
+    row_max = shared[0];
+    
+    // ============ PASS 2: Compute sum of exponentials ============
+    float local_sum = 0.0f;
+    for (int i = threadIdx.x; i < cols; i += blockDim.x) {
+        local_sum += expf(x_row[i] - row_max);
+    }
+    
+    // Reduce to block-wide sum
+    float row_sum = block_reduce_sum(local_sum, shared);
+    
+    // Broadcast row_sum to all threads
+    if (threadIdx.x == 0) {
+        shared[0] = row_sum;
+    }
+    __syncthreads();
+    row_sum = shared[0];
+    
+    // ============ PASS 3: Write softmax output ============
+    for (int i = threadIdx.x; i < cols; i += blockDim.x) {
+        out_row[i] = expf(x_row[i] - row_max) / row_sum;
+    }
+}
 
 # Step 13 - causal_softmax_kernel (not yet solved)
 # TODO: implement
