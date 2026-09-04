@@ -101,8 +101,18 @@ __device__ float block_reduce_max(float val, float* shared) {
     return block_max;
 }
 
-# Step 5 - add_residual_kernel (not yet solved)
-# TODO: implement
+# Step 5 - add_residual_kernel
+__global__ void add_residual_kernel(const float* x, const float* residual,
+                                    float* out, int n) {
+    // Compute global index from launch configuration
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    
+    // Grid-stride loop to cover all elements regardless of n
+    // This handles any n, even if it's larger than the total threads launched
+    for (int i = idx; i < n; i += blockDim.x * gridDim.x) {
+        out[i] = x[i] + residual[i];
+    }
+}
 
 # Step 6 - gelu_kernel (not yet solved)
 # TODO: implement
