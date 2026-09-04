@@ -556,8 +556,42 @@ __global__ void linear_kernel(const float* x, const float* weight,
     out[idx] = sum;
 }
 
-# Step 17 - fused_linear_bias_gelu_kernel (not yet solved)
-# TODO: implement
+# Step 17 - fused_linear_bias_gelu_kernel
+__global__ void fused_linear_bias_gelu_kernel(
+    const float* x, const float* weight, const float* bias,
+    float* out, int M, int N, int K) {
+    
+    // Total output elements (M * N)
+    int total = M * N;
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx >= total) return;
+
+    // Decode row (m) and column (n) of the output matrix
+    int m = idx / N;
+    int n = idx % N;
+
+    // Compute dot product: sum over K
+    float sum = 0.0f;
+    for (int k = 0; k < K; ++k) {
+        sum += x[(size_t)m * K + k] * weight[(size_t)n * K + k];
+    }
+
+    // Add bias (non‑null in this fused kernel)
+    sum += bias[n];
+
+    // ----- Apply GELU (tanh approximation) -----
+    // Constants for GELU: sqrt(2/pi) and cubic coefficient
+    const float sqrt_2_over_pi = 0.7978845608028654f;  // sqrtf(2.0f / M_PI)
+    const float cubic_coeff = 0.044715f;
+
+    float x_val = sum;
+    float x3 = x_val * x_val * x_val;
+    float tanh_arg = sqrt_2_over_pi * (x_val + cubic_coeff * x3);
+    float gelu = 0.5f * x_val * (1.0f + tanhf(tanh_arg));
+
+    // Write result
+    out[idx] = gelu;
+}
 
 # Step 18 - mlp_swiglu_forward (not yet solved)
 # TODO: implement
