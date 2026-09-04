@@ -490,8 +490,43 @@ __global__ void embedding_lookup_kernel(const int* token_ids, const float* weigh
     }
 }
 
-# Step 15 - rope_kernel (not yet solved)
-# TODO: implement
+# Step 15 - rope_kernel
+__global__ void rope_kernel(float* q, float* k,
+                            const float* cos_table, const float* sin_table,
+                            int seq_len, int n_heads, int head_dim) {
+    int half = head_dim / 2;
+    int total = seq_len * n_heads * half;
+    int idx = blockIdx.x * blockDim.x + threadIdx.x;
+    if (idx >= total) return;
+
+    // Recover position (t), head (h), and pair index (i)
+    int pos = idx / (n_heads * half);
+    int rem = idx - pos * (n_heads * half);
+    int head = rem / half;
+    int pair = rem - head * half;
+
+    // Base offset for this (pos, head) in the feature dimension
+    size_t base = ((size_t)pos * n_heads + head) * head_dim;
+    size_t even = base + 2 * pair;
+    size_t odd = even + 1;
+
+    // Load cosine and sine for this position and pair
+    size_t table_idx = (size_t)pos * half + pair;
+    float cos_val = cos_table[table_idx];
+    float sin_val = sin_table[table_idx];
+
+    // ---- Apply rotation to query ----
+    float q0 = q[even];
+    float q1 = q[odd];
+    q[even] = q0 * cos_val - q1 * sin_val;
+    q[odd]  = q0 * sin_val + q1 * cos_val;
+
+    // ---- Apply the identical rotation to key ----
+    float k0 = k[even];
+    float k1 = k[odd];
+    k[even] = k0 * cos_val - k1 * sin_val;
+    k[odd]  = k0 * sin_val + k1 * cos_val;
+}
 
 # Step 16 - linear_kernel (not yet solved)
 # TODO: implement
